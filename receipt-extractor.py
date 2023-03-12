@@ -15,10 +15,11 @@ from googleapiclient import discovery, http
 from httplib2 import Http
 from oauth2client import file, client, tools
 from google.cloud import vision
+from google.cloud import storage
 
-FILE = 'receipt03.jpg'  # fill-in with name of your Drive file
-BUCKET = 'demo_drive' # bucket name
-PARENT = 'trial_receipts'     # YOUR IMG FILE PREFIX  
+# FILE = 'receipt02.jpg'  # fill-in with name of your Drive file
+BUCKET = 'cloud-workshop-bucket' # bucket name
+PARENT = 'receipts'     # YOUR IMG FILE PREFIX  
 SHEET = '1sdwPpYT8dscUKPSirkBQSlEvKe-oZVAlyAXDF3w7P_w' # sheets id
 TOP = 5       # TOP # of LABELS TO SAVE
 DEBUG = False
@@ -45,21 +46,15 @@ VISION = discovery.build('vision',  'v1', http=HTTP)
 SHEETS = discovery.build('sheets',  'v4', http=HTTP)
 
 
-def drive_get_img(fname):
-    'download file from Drive and return file info & binary if found'
-
+def drive_get_img():
+    'download files from Drive and return file info & binary if found'
     folder_id = '12150MNZZsxpV4eh_ImTYPyQwfGtoUOsC' # search for file on Google Drive in the given directory
-    query = "name='%s' and '%s' in parents" % (fname, folder_id)
+    query = "'%s' in parents" % (folder_id)
     rsp = DRIVE.files().list(q=query, fields='files(id,name,mimeType,modifiedTime)').execute().get('files', [])
-
-    # download binary & return file info if found, else return None
+    
+    # Return file info if found, else return None
     if rsp:
-        target = rsp[0]  # use first matching file
-        fileId = target['id']
-        fname = target['name']
-        mtype = target['mimeType']
-        binary = DRIVE.files().get_media(fileId=fileId).execute()
-        return fname, mtype, target['modifiedTime'], binary
+        return rsp
 
 
 def gcs_blob_upload(fname, bucket, media, mimetype):
@@ -119,50 +114,66 @@ def sheet_append_row(sheet, row):
         return rsp.get('updates').get('updatedCells')
 
 
-def main(fname, bucket, sheet_id, folder, top, debug):
+def main(bucket, sheet_id, folder, top, debug):
     '"main()" drives process from image download through report generation'
 
     # download img file & info from Drive
-    rsp = drive_get_img(fname)
+    rsp = drive_get_img()
     if not rsp:
         return
-    fname, mtype, ftime, data = rsp
     if debug:
-        print('Downloaded %r (%s, %s, size: %d)' % (fname, mtype, ftime, len(data)))
+        print(rsp)
 
-    # upload file to GCS
-    gcsname = '%s/%s'% (folder, fname)
-    rsp = gcs_blob_upload(gcsname, bucket, data, mtype)
-    if not rsp:
-        return
-    if debug:
-        print('Uploaded %r to GCS bucket %r' % (rsp['name'], rsp['bucket']))
+    for target in rsp:
+        fileId = target['id']
+        fname = target['name']
+        mtype = target['mimeType']
+        data = DRIVE.files().get_media(fileId=fileId).execute() #binary data
+        ftime = target['modifiedTime']
 
-    # process w/Vision
-    rsp, extracted_text, shop_name, date, total_price = vision_detect_text_img(base64.b64encode(data).decode('utf-8'), top)
-    if not rsp:
-        return
-    if debug:
-        print('Top %d responses from Vision API: %s' % (top, rsp))
+        # Create a client object
+        client = storage.Client()
+        # Define the prefix to search for the file in the my_folder directory
+        prefix = 'receipts/'
+        # List all the blobs in the bucket with the specified prefix
+        blobs = client.get_bucket(bucket).list_blobs(prefix=prefix)
+        files=[a.name for a in blobs]
+        if (prefix + fname) in files:
+            continue
 
-    # push results to Sheet, get cells-saved count
-    row = [date,
-            '=HYPERLINK("storage.cloud.google.com/%s/%s", "%s")' % (
-            bucket, gcsname, fname), shop_name, total_price, ftime
-    ]
-    rsp = sheet_append_row(sheet_id, row)
-    if not rsp:
-        return
-    if debug:
-        print('Added %d cells to Google Sheet' % rsp)
+        # upload file to GCS
+        gcsname = '%s/%s'% (folder, fname)
+        rsp = gcs_blob_upload(gcsname, bucket, data, mtype)
+        if not rsp:
+            return
+        if debug:
+            print('Uploaded %r to GCS bucket %r' % (rsp['name'], rsp['bucket']))
+
+        # process w/Vision
+        rsp, extracted_text, shop_name, date, total_price = vision_detect_text_img(base64.b64encode(data).decode('utf-8'), top)
+        if not rsp:
+            return
+        if debug:
+            print('Top %d responses from Vision API: %s' % (top, rsp))
+
+        # push results to Sheet, get cells-saved count
+        row = [date,
+                '=HYPERLINK("storage.cloud.google.com/%s/%s", "%s")' % (
+                bucket, gcsname, fname), shop_name, total_price, ftime
+        ]
+        rsp = sheet_append_row(sheet_id, row)
+        if not rsp:
+            return
+        if debug:
+            print('Added %d cells to Google Sheet' % rsp)
     return True
 
 
 if __name__ == '__main__':
     # args: [-hv] [-i imgfile] [-b bucket] [-f folder] [-s Sheet ID] [-t top labels]
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--imgfile", action="store_true",
-            default=FILE, help="image file filename")
+    # parser.add_argument("-i", "--imgfile", action="store_true",
+    #         default=FILE, help="image file filename")
     parser.add_argument("-b", "--bucket_id", action="store_true",
             default=BUCKET, help="Google Cloud Storage bucket name")
     parser.add_argument("-f", "--folder", action="store_true",
@@ -175,12 +186,12 @@ if __name__ == '__main__':
             default=DEBUG, help="verbose display output")
     args = parser.parse_args()
 
-    print('Processing file %r... please wait' % args.imgfile)
-    rsp = main(args.imgfile, args.bucket_id,
+    print('Processing files... please wait')
+    rsp = main(args.bucket_id,
             args.sheet_id, args.folder, args.viz_top, args.verbose)
     if rsp:
         sheet_url = 'https://docs.google.com/spreadsheets/d/%s/edit' % args.sheet_id
         print('DONE: opening web browser to it, or see %s' % sheet_url)
         webbrowser.open(sheet_url, new=1, autoraise=True)
     else:
-        print('ERROR: could not process %r' % args.imgfile)
+        print('ERROR: could not process')
