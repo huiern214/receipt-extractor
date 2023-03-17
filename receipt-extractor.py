@@ -17,7 +17,6 @@ from oauth2client import file, client, tools
 from google.cloud import vision
 from google.cloud import storage
 
-# FILE = 'receipt02.jpg'  # fill-in with name of your Drive file
 BUCKET = 'cloud-workshop-bucket' # bucket name
 PARENT = 'receipts'     # YOUR IMG FILE PREFIX  
 SHEET = '1sdwPpYT8dscUKPSirkBQSlEvKe-oZVAlyAXDF3w7P_w' # sheets id
@@ -48,7 +47,7 @@ SHEETS = discovery.build('sheets',  'v4', http=HTTP)
 
 def drive_get_img():
     'download files from Drive and return file info & binary if found'
-    folder_id = '12150MNZZsxpV4eh_ImTYPyQwfGtoUOsC' # search for file on Google Drive in the given directory
+    folder_id = '1YOoKlYrI8IKQkU_CwGfpo3jDyyKoX_aP' # search for file on Google Drive in the given directory
     query = "'%s' in parents" % (folder_id)
     rsp = DRIVE.files().list(q=query, fields='files(id,name,mimeType,modifiedTime)').execute().get('files', [])
     
@@ -72,7 +71,7 @@ def vision_detect_text_img(img, top):
 
     # build image metadata and call Vision API to process
     body = {'requests': [{
-                'image':     {'content': img},
+                'image': {'content': img},
                 'features': [{'type': 'TEXT_DETECTION', 'maxResults': top}],
     }]}
     rsp = VISION.images().annotate(body=body).execute().get('responses', [{}])[0]
@@ -89,6 +88,7 @@ def vision_detect_text_img(img, top):
         extracted_text = rsp.get('textAnnotations', [{}])[0].get('description', '')
         lines = extracted_text.split("\n")
         shop_name = lines[0]
+        shop_address = lines[1] + " " + lines[2] + " " + lines[3]
 
         for line in lines:
             if containsCaseInsensitive("Date", line):
@@ -99,7 +99,7 @@ def vision_detect_text_img(img, top):
                 else: 
                     total_price = line.split(" ")[-1]
     
-    return rsp, extracted_text, shop_name, date, total_price
+    return rsp, extracted_text, shop_name, shop_address, date, total_price
 
 
 def sheet_append_row(sheet, row):
@@ -132,9 +132,11 @@ def main(bucket, sheet_id, folder, top, debug):
         ftime = target['modifiedTime']
 
         # Create a client object
+        ## for local run, https://cloud.google.com/docs/authentication/client-libraries
+        ## client = storage.Client(project="cloud-workshop-380401")
         client = storage.Client()
         # Define the prefix to search for the file in the my_folder directory
-        prefix = 'receipts/'
+        prefix = folder + '/'
         # List all the blobs in the bucket with the specified prefix
         blobs = client.get_bucket(bucket).list_blobs(prefix=prefix)
         files=[a.name for a in blobs]
@@ -150,7 +152,7 @@ def main(bucket, sheet_id, folder, top, debug):
             print('Uploaded %r to GCS bucket %r' % (rsp['name'], rsp['bucket']))
 
         # process w/Vision
-        rsp, extracted_text, shop_name, date, total_price = vision_detect_text_img(base64.b64encode(data).decode('utf-8'), top)
+        rsp, extracted_text, shop_name, shop_address, date, total_price = vision_detect_text_img(base64.b64encode(data).decode('utf-8'), top)
         if not rsp:
             return
         if debug:
@@ -159,7 +161,7 @@ def main(bucket, sheet_id, folder, top, debug):
         # push results to Sheet, get cells-saved count
         row = [date,
                 '=HYPERLINK("storage.cloud.google.com/%s/%s", "%s")' % (
-                bucket, gcsname, fname), shop_name, total_price, ftime
+                bucket, gcsname, fname), shop_name, shop_address, total_price, ftime
         ]
         rsp = sheet_append_row(sheet_id, row)
         if not rsp:
