@@ -8,7 +8,7 @@ to Google Cloud Vision for processing, add results row to Google Sheet.
 from __future__ import print_function
 import argparse
 import base64
-import io
+import io, os
 import webbrowser
 
 from googleapiclient import discovery, http
@@ -29,10 +29,15 @@ SCOPES = (
     'https://www.googleapis.com/auth/spreadsheets',
 )
 
+# create storage.json in an existing directory/folder
+# dir_name = 'Trial1'
+# store = file.Storage(os.path.join(dir_name, 'storage.json'))
 store = file.Storage('storage.json')
 creds = store.get()
 if not creds or creds.invalid:
     flow = client.flow_from_clientsecrets('client_secret.json', SCOPES)
+    # if client_secret.json is in an existing directory/folder
+    # flow = client.flow_from_clientsecrets(os.path.join(dir_name, 'client_secret.json'), SCOPES) 
     creds = tools.run_flow(flow, store)
 
 # create API service endpoints
