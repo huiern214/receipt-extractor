@@ -16,9 +16,9 @@ from httplib2 import Http
 from oauth2client import file, client, tools
 from google.cloud import storage
 
-BUCKET = 'cloud-workshop-bucket' # BUCKET NAME
-PARENT = 'receipts'     # YOUR IMG FILE PREFIX / FOLDER IN BUCKET 
-SHEET = '1sdwPpYT8dscUKPSirkBQSlEvKe-oZVAlyAXDF3w7P_w' # SHEETS ID
+BUCKET = 'BUCKET_NAME' # BUCKET NAME
+PARENT = 'receipts' # YOUR IMG FILE PREFIX / FOLDER IN BUCKET 
+SHEET = 'SHEETS_ID' # SHEETS ID
 DEBUG = False
 
 # process credentials for OAuth2 tokens
@@ -49,7 +49,7 @@ SHEETS = discovery.build('sheets',  'v4', http=HTTP)
 
 def drive_get_img():
     'download files from Drive and return file info & binary if found'
-    folder_id = '1YOoKlYrI8IKQkU_CwGfpo3jDyyKoX_aP' # search for file on Google Drive in the given directory
+    folder_id = 'FOLDER_ID' # search for file on Google Drive in the given directory
     query = "'%s' in parents and trashed=false" % (folder_id) # list all files in the drive folder
     rsp = DRIVE.files().list(q=query, fields='files(id,name,mimeType,modifiedTime)').execute().get('files', [])
     
@@ -77,6 +77,7 @@ def vision_detect_text_img(img):
                 'features': {'type': 'TEXT_DETECTION'},
     }]}
     rsp = VISION.images().annotate(body=body).execute().get('responses', [{}])[0]
+
     def containsCaseInsensitive(substring, string):
         if substring.lower() in string.lower():
             return True
